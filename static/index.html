@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediSchedule – Healthcare Scheduling Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+
+<aside class="side">
+  <div class="brand"><span class="logo">🏥</span><div><b>MediSchedule</b><small>CPU scheduling for patient care</small></div></div>
+  <nav>
+    <button class="nav active" data-tab="dashboard"><i>📊</i>Dashboard</button>
+    <button class="nav" data-tab="patients"><i>🧑‍⚕️</i>Patients</button>
+    <button class="nav" data-tab="schedule"><i>🗓️</i>Schedule</button>
+    <button class="nav" data-tab="compare"><i>⚖️</i>Compare</button>
+    <button class="nav" data-tab="resources"><i>🩺</i>Resources</button>
+    <button class="nav" data-tab="history"><i>🕘</i>History</button>
+  </nav>
+  <div class="help"><b>New here?</b><p>Go to Patients, press <em>Load sample patients</em>, then open Schedule and Compare.</p></div>
+</aside>
+
+<div class="main">
+<header class="top">
+  <div><h1 id="pgTitle">Dashboard</h1><p id="pgSub"></p></div>
+  <button class="btn" data-go="patients">+ Add patient</button>
+</header>
+
+<div class="content">
+
+<!-- DASHBOARD -->
+<section id="dashboard" class="panel active">
+  <div class="kpis">
+    <div class="kpi"><span class="ic b">🧑‍⚕️</span><div><small>Patients waiting</small><b id="kPat">0</b></div></div>
+    <div class="kpi"><span class="ic r">🚨</span><div><small>Emergency (priority 0)</small><b id="kEm">0</b></div></div>
+    <div class="kpi"><span class="ic o">⏱️</span><div><small>Avg treatment time</small><b id="kAvg">0 min</b></div></div>
+    <div class="kpi"><span class="ic g">🩺</span><div><small>Doctors, nurses, beds</small><b id="kStaff">0</b></div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Getting started</h2>
+      <p class="hint">This tool decides <b>who is treated first</b> and <b>which doctor, nurse and bed</b> they get, by testing four scheduling algorithms.</p>
+      <ul class="check" id="checklist"></ul>
+    </div>
+    <div class="card">
+      <h2>Patients by priority</h2>
+      <div class="donutbox"><div id="donut"></div><div id="legend"></div></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card"><h2>Latest result</h2><div id="latest"></div></div>
+    <div class="card"><div class="row"><h2>Recent runs</h2><button class="btn light small" data-go="history">View all</button></div>
+      <div class="scroll"><table id="recent"></table></div></div>
+  </div>
+</section>
+
+<!-- PATIENTS -->
+<section id="patients" class="panel">
+  <div class="card">
+    <div class="row"><h2>Add a patient</h2><button class="btn light" id="sampleBtn">✨ Load sample patients</button></div>
+    <form id="patientForm" class="form">
+      <label>Name<input id="pName" placeholder="e.g. Ravi" required></label>
+      <label>Arrival time <small>(minutes from start)</small><input id="pArr" type="number" min="0" value="0" required></label>
+      <label>Treatment time <small>(minutes)</small><input id="pBurst" type="number" min="1" placeholder="e.g. 20" required></label>
+      <label>Priority
+        <select id="pPri">
+          <option value="0">0 – Emergency</option><option value="1">1 – Urgent</option>
+          <option value="2" selected>2 – Routine</option><option value="3">3 – Low</option>
+        </select></label>
+      <button class="btn" type="submit">+ Add patient</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="row"><h2>Waiting patients <span id="pCount" class="pill">0</span></h2>
+      <button class="btn danger small" id="clearBtn">Clear all</button></div>
+    <div class="scroll"><table id="pTable"></table></div>
+    <div class="row end"><button class="btn big" data-go="schedule">Next: choose an algorithm →</button></div>
+  </div>
+</section>
+
+<!-- SCHEDULE -->
+<section id="schedule" class="panel">
+  <div class="card">
+    <h2>Choose an algorithm</h2>
+    <div class="algos" id="algoCards"></div>
+    <div class="row left">
+      <label id="qBox" class="inline">Time quantum <small>(Round Robin only)</small><input id="quantum" type="number" min="1" value="5"></label>
+      <button class="btn big" id="runBtn">▶ Run schedule</button>
+    </div>
+  </div>
+  <div id="schedResult" class="hidden">
+    <div class="stats" id="stats"></div>
+    <div class="card"><h2>Treatment timeline</h2>
+      <p class="hint">Each bar is a patient being treated. Red outline = emergency. Gaps mean nobody had arrived yet.</p>
+      <div id="gantt"></div></div>
+    <div class="card"><h2>Patient details and assigned staff</h2><div class="scroll"><table id="rTable"></table></div></div>
+    <div class="card"><h2>Staff workload</h2><div id="workload"></div></div>
+  </div>
+  <div id="schedEmpty" class="card empty">Pick an algorithm and press <b>Run schedule</b> to see results.</div>
+</section>
+
+<!-- COMPARE -->
+<section id="compare" class="panel">
+  <div class="card"><div class="row"><div><h2>Compare all four algorithms</h2>
+    <p class="hint">Runs every algorithm on the same patients and recommends the best one.</p></div>
+    <button class="btn big" id="cmpBtn">⚖️ Compare now</button></div></div>
+  <div id="cmpResult" class="hidden">
+    <div class="card rec" id="recBox"></div>
+    <div class="card"><div class="scroll"><table id="cTable"></table></div></div>
+    <div class="card"><h2>Lower is better</h2><div id="barChart"></div></div>
+  </div>
+</section>
+
+<!-- RESOURCES -->
+<section id="resources" class="panel">
+  <div class="card"><h2>Add staff or beds</h2>
+    <p class="hint">The scheduler gives each patient the least busy doctor, nurse and bed.</p>
+    <form id="resForm" class="form">
+      <label>Type<select id="rKind"><option value="doctor">Doctor</option><option value="nurse">Nurse</option><option value="bed">Bed / Floor</option></select></label>
+      <label>Name<input id="rName" placeholder="e.g. Dr. Kumar" required></label>
+      <button class="btn" type="submit">+ Add</button>
+    </form></div>
+  <div class="card"><div class="scroll"><table id="resTable"></table></div></div>
+</section>
+
+<!-- HISTORY -->
+<section id="history" class="panel">
+  <div class="card"><h2>Past runs</h2><div class="scroll"><table id="hTable"></table></div></div>
+</section>
+
+</div></div></div>
+<div id="toast"></div>
+<script src="/static/script.js"></script>
+</body>
+</html>

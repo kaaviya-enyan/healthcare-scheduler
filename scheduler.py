@@ -1,92 +1,85 @@
 ALGORITHMS = ["FCFS", "SJN", "Priority", "Round Robin"]
 KINDS = ["doctor", "nurse", "bed"]
 
-
-def _slice(p, start, end):
-    return {"pid": p["id"], "name": p["name"], "start": start, "end": end}
-
-
-def _non_preemptive(patients, key):
-    pending = sorted(patients, key=lambda p: (p["arrival"], p["id"]))
-    t, slices = 0, []
-    while pending:
-        ready = [p for p in pending if p["arrival"] <= t]
-        if not ready:                       # CPU idle -> jump to next arrival
-            t = min(p["arrival"] for p in pending)
-            continue
-        p = min(ready, key=key)
-        pending.remove(p)
-        slices.append(_slice(p, t, t + p["burst"]))
-        t += p["burst"]
-    return slices
+KEYS = {
+    "FCFS": lambda p: (p["arrival"], p["id"]),
+    "SJN": lambda p: (p["burst"], p["arrival"], p["id"]),
+    "Priority": lambda p: (p["priority"], p["arrival"], p["id"]),
+}
 
 
-def _round_robin(patients, quantum):
-    incoming = sorted(patients, key=lambda p: (p["arrival"], p["id"]))
+def _simulate(patients, resources, key=None, quantum=None):
+    """Time-aware simulation. A treatment (or a Round Robin slice) can start only
+    when one doctor, one nurse and one bed are ALL free at that moment. Each
+    resource remembers when it becomes free; among the free ones, the least
+    loaded is chosen. Several patients can be treated in parallel."""
+    free = {k: {n: 0 for n in resources.get(k, [])} for k in KINDS}   # when each resource is free
+    load = {k: {n: 0 for n in resources.get(k, [])} for k in KINDS}   # total minutes worked
+    pools = [k for k in KINDS if free[k]]
     rem = {p["id"]: p["burst"] for p in patients}
-    queue, slices, t, i = [], [], 0, 0
-    while i < len(incoming) or queue:
-        while i < len(incoming) and incoming[i]["arrival"] <= t:
-            queue.append(incoming[i]); i += 1
-        if not queue:
-            t = incoming[i]["arrival"]
+    events = [(p["arrival"], 0, p["id"], p) for p in patients]        # (time, kind, id, patient)
+    ready, slices, t = [], [], 0
+    room = 0                                                          # used only when no resources are defined
+
+    while events or ready:
+        events.sort(key=lambda e: e[:3])
+        while events and events[0][0] <= t:                           # patients who have arrived / returned
+            ready.append(events.pop(0)[3])
+        if not ready:                                                 # nobody waiting -> jump ahead
+            t = events[0][0]
             continue
-        p = queue.pop(0)
-        run = min(quantum, rem[p["id"]])
-        slices.append(_slice(p, t, t + run))
-        t += run
+        nxt = max((min(free[k].values()) for k in pools), default=room)  # earliest time a full set is free
+        if nxt > t:                                                   # all staff/beds busy -> wait
+            t = nxt
+            continue
+        p = ready[0] if quantum else min(ready, key=key)
+        ready.remove(p)
+        run = min(quantum, rem[p["id"]]) if quantum else rem[p["id"]]
+        used = {}
+        for k in KINDS:
+            if not free[k]:
+                used[k] = "Unavailable"
+                continue
+            n = min((n for n in free[k] if free[k][n] <= t),          # only resources free right now
+                    key=lambda n: (load[k][n], free[k][n]))           # ...then the least loaded
+            free[k][n] = t + run
+            load[k][n] += run
+            used[k] = n
+        if not pools:
+            room = t + run                                            # no resources defined: one treatment at a time
+        slices.append({"pid": p["id"], "name": p["name"], "start": t, "end": t + run, **used})
         rem[p["id"]] -= run
-        while i < len(incoming) and incoming[i]["arrival"] <= t:
-            queue.append(incoming[i]); i += 1
-        if rem[p["id"]] > 0:
-            queue.append(p)
-    return slices
+        if rem[p["id"]] > 0:                                          # Round Robin: back to the queue after the slice
+            events.append((t + run, 1, p["id"], p))
+    capacity = max(1, min((len(free[k]) for k in pools), default=1))  # max parallel treatments
+    return slices, load, capacity
 
 
-def allocate(patients, slices, resources):
-    """Workload-balanced allocation: each patient gets the least-loaded
-    doctor, nurse and bed at the moment their treatment first starts."""
-    load = {k: {n: 0 for n in resources.get(k, [])} for k in KINDS}
-    first = {}
+def _rows(patients, slices):
+    info = {}
     for s in slices:
-        first.setdefault(s["pid"], s["start"])
-    burst = {p["id"]: p["burst"] for p in patients}
-    alloc = {}
-    for pid in sorted(first, key=first.get):
-        alloc[pid] = {}
-        for kind in KINDS:
-            pool = load[kind]
-            if pool:
-                n = min(pool, key=pool.get)
-                pool[n] += burst[pid]
-                alloc[pid][kind] = n
-            else:
-                alloc[pid][kind] = "Unavailable"
-    return alloc, load
-
-
-def _rows(patients, slices, alloc):
-    first, last = {}, {}
-    for s in slices:
-        first.setdefault(s["pid"], s["start"])
-        last[s["pid"]] = s["end"]
+        d = info.setdefault(s["pid"], {"start": s["start"], "end": s["end"], **{k: [] for k in KINDS}})
+        d["end"] = max(d["end"], s["end"])
+        for k in KINDS:
+            if s[k] not in d[k]:
+                d[k].append(s[k])
     rows = []
     for p in patients:
-        ct = last[p["id"]]
-        tat = ct - p["arrival"]
+        d = info[p["id"]]
+        tat = d["end"] - p["arrival"]
         rows.append({
             "id": p["id"], "name": p["name"], "priority": p["priority"],
             "arrival": p["arrival"], "burst": p["burst"],
-            "start": first[p["id"]], "completion": ct,
+            "start": d["start"], "completion": d["end"],
             "turnaround": tat, "waiting": tat - p["burst"],
-            "response": first[p["id"]] - p["arrival"],
-            "doctor": alloc[p["id"]]["doctor"], "nurse": alloc[p["id"]]["nurse"],
-            "bed": alloc[p["id"]]["bed"],
+            "response": d["start"] - p["arrival"],
+            "doctor": " / ".join(d["doctor"]), "nurse": " / ".join(d["nurse"]),
+            "bed": " / ".join(d["bed"]),
         })
     return rows
 
 
-def _summary(rows, slices):
+def _summary(rows, slices, capacity):
     n = len(rows)
     makespan = max(s["end"] for s in slices)
     busy = sum(s["end"] - s["start"] for s in slices)
@@ -96,7 +89,8 @@ def _summary(rows, slices):
         "avg_tat": round(sum(r["turnaround"] for r in rows) / n, 2),
         "avg_resp": round(sum(r["response"] for r in rows) / n, 2),
         "makespan": makespan,
-        "utilisation": round(busy / makespan * 100, 1),
+        "capacity": capacity,
+        "utilisation": round(busy / (makespan * capacity) * 100, 1),
         "emergency_response": round(sum(emerg) / len(emerg), 2) if emerg else None,
     }
 
@@ -104,20 +98,16 @@ def _summary(rows, slices):
 def run_algorithm(name, patients, quantum=5, resources=None):
     if not patients:
         raise ValueError("No patients to schedule")
-    if name == "FCFS":
-        slices = _non_preemptive(patients, lambda p: (p["arrival"], p["id"]))
-    elif name == "SJN":
-        slices = _non_preemptive(patients, lambda p: (p["burst"], p["arrival"], p["id"]))
-    elif name == "Priority":
-        slices = _non_preemptive(patients, lambda p: (p["priority"], p["arrival"], p["id"]))
+    resources = resources or {}
+    if name in KEYS:
+        slices, load, cap = _simulate(patients, resources, key=KEYS[name])
     elif name == "Round Robin":
-        slices = _round_robin(patients, max(1, int(quantum)))
+        slices, load, cap = _simulate(patients, resources, quantum=max(1, int(quantum)))
     else:
         raise ValueError(f"Unknown algorithm: {name}")
-    alloc, workload = allocate(patients, slices, resources or {})
-    rows = _rows(patients, slices, alloc)
+    rows = _rows(patients, slices)
     return {"algorithm": name, "quantum": quantum, "slices": slices, "rows": rows,
-            "summary": _summary(rows, slices), "workload": workload}
+            "summary": _summary(rows, slices, cap), "workload": load}
 
 
 def compare_all(patients, quantum=5, resources=None):
